@@ -122,4 +122,4 @@ def compute_loss(label, pred):
 
 model.compile(optimizer='adam', loss=compute_loss, metrics=['accuracy'])
 pred = model(test_input)
-print(tf.shape(pred))
+print(pred[0, 0, :])
