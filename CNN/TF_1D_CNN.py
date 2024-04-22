@@ -10,7 +10,7 @@
 #================================================================
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras.layers import Conv1D, Input, LeakyReLU, ZeroPadding1D, BatchNormalization, MaxPool1D
+from tensorflow.keras.layers import Conv1D, Input, LeakyReLU, ZeroPadding1D, BatchNormalization, MaxPool1D, UpSampling1D
 from tensorflow.keras.regularizers import l2
 
 NUM_CLASS = 3
@@ -37,6 +37,36 @@ class BatchNormalization(BatchNormalization):
             training = tf.constant(False)
         training = tf.logical_and(training, self.trainable)
         return super().call(x, training)
+    
+class Decode(tf.keras.Layer):
+    def call(self, inp, i=0, training=False):
+        conv_shape       = tf.shape(inp)
+        batch_size       = conv_shape[0]
+        output_size      = conv_shape[1]
+
+        conv_output = tf.reshape(inp, (batch_size, output_size, 2, 3 + NUM_CLASS))
+
+        conv_raw_dx   = conv_output[:, :, :, 0:1] # offset of center position     
+        conv_raw_dw   = conv_output[:, :, :, 1:2] # Prediction box length and width offset
+        conv_raw_conf = conv_output[:, :, :, 2:3] # confidence of the prediction box
+        conv_raw_prob = conv_output[:, :, :, 3:] # category probability of the prediction box 
+
+        # next need Draw the grid. Where output_size is equal to 13, 26 or 52  
+        x_grid = tf.range(output_size,dtype=tf.int32)
+        x_grid = tf.tile(x_grid[tf.newaxis, :, tf.newaxis, tf.newaxis], [batch_size, 1, 2, 1])
+        x_grid = tf.cast(x_grid, tf.float32)
+
+        # Calculate the center position of the prediction box:
+        pred_x = (tf.sigmoid(conv_raw_dx) + x_grid) * STRIDES[i]
+        # Calculate the length and width of the prediction box:
+        pred_w = (tf.exp(conv_raw_dw) * ANCHORS[i]) * STRIDES[i]
+
+        pred_xw = tf.concat([pred_x, pred_w], axis=-1)
+        pred_conf = tf.sigmoid(conv_raw_conf) # object box calculates the predicted confidence
+        pred_prob = tf.sigmoid(conv_raw_prob) # calculating the predicted probability category box object
+
+        # calculating the predicted probability category box object
+        return tf.concat([pred_xw, pred_conf, pred_prob], axis=-1)
 
 def convolutional(input_layer, filters_shape, downsample=False, activate=True, bn=True):
     if downsample:
@@ -67,7 +97,7 @@ def residual_block(input_layer, input_channel, filter_num1, filter_num2):
     return residual_output
 
 def upsample(input_layer):
-    return tf.image.resize(input_layer, input_layer.shape[1] * 2, method='nearest')
+    return UpSampling1D(size=2)(input_layer)
 
 
 def darknet53(input_data):
@@ -175,12 +205,14 @@ def YOLOv3_tiny(input_layer, NUM_CLASS):
     # conv_lbbox is used to predict large-sized objects , Shape = [None, 26, 26, 255]
     conv_lbbox = convolutional(conv_lobj_branch, (1, 512, 2*(NUM_CLASS + 3)), activate=False, bn=False)
 
-    conv = convolutional(conv, (1, 256, 128))
+    #conv = convolutional(conv, (1, 256, 128))
     # upsample here uses the nearest neighbor interpolation method, which has the advantage that the
     # upsampling process does not need to learn, thereby reducing the network parameter  
     conv = upsample(conv)
+    print(conv)
+    print(route_1)
     
-    conv = tf.concat([conv, route_1], axis=-1)
+    conv = tf.keras.layers.Concatenate(axis=-1)([conv, route_1])
     conv_mobj_branch = convolutional(conv, (3, 128, 256))
     # conv_mbbox is used to predict medium size objects, shape = [None, 13, 13, 255]
     conv_mbbox = convolutional(conv_mobj_branch, (1, 256, 2 * (NUM_CLASS + 3)), activate=False, bn=False)
@@ -206,33 +238,7 @@ def Create_Yolov3(input_size=416, channels=3, training=False):
 
 def decode(conv_output, NUM_CLASS, i=0):
     # where i = 0, 1 or 2 to correspond to the three grid scales  
-    conv_shape       = tf.shape(conv_output)
-    batch_size       = conv_shape[0]
-    output_size      = conv_shape[1]
-
-    conv_output = tf.reshape(conv_output, (batch_size, output_size, 2, 3 + NUM_CLASS))
-
-    conv_raw_dx   = conv_output[:, :, :, 0] # offset of center position     
-    conv_raw_dw   = conv_output[:, :, :, 1] # Prediction box length and width offset
-    conv_raw_conf = conv_output[:, :, :, 2] # confidence of the prediction box
-    conv_raw_prob = conv_output[:, :, :, 3:] # category probability of the prediction box 
-
-    # next need Draw the grid. Where output_size is equal to 13, 26 or 52  
-    x_grid = tf.range(output_size,dtype=tf.int32)
-    x_grid = tf.tile(x_grid[tf.newaxis, :, tf.newaxis, :], [batch_size, 1, 3, 1])
-    x_grid = tf.cast(x_grid, tf.float32)
-
-    # Calculate the center position of the prediction box:
-    pred_x = (tf.sigmoid(conv_raw_dx) + x_grid) * STRIDES[i]
-    # Calculate the length and width of the prediction box:
-    pred_w = (tf.exp(conv_raw_dw) * ANCHORS[i]) * STRIDES[i]
-
-    pred_xw = tf.concat([pred_x, pred_w], axis=-1)
-    pred_conf = tf.sigmoid(conv_raw_conf) # object box calculates the predicted confidence
-    pred_prob = tf.sigmoid(conv_raw_prob) # calculating the predicted probability category box object
-
-    # calculating the predicted probability category box object
-    return tf.concat([pred_xw, pred_conf, pred_prob], axis=-1)
+    return Decode()(conv_output, i=i)
 
 def bbox_iou(boxes1, boxes2):
     boxes1_width = boxes1[..., 1]
@@ -337,3 +343,17 @@ def compute_loss(pred, conv, label, bboxes, i=0):
     prob_loss = tf.reduce_mean(tf.reduce_sum(prob_loss, axis=[1,2,3,4]))
 
     return giou_loss, conf_loss, prob_loss
+
+def main():
+    NUM_INPUTS = 20000
+    NUM_CHANNELS = 1
+
+    test_input = tf.random.uniform((NUM_INPUTS, NUM_CHANNELS), dtype=tf.dtypes.float32)
+
+    model = Create_Yolov3(NUM_INPUTS, NUM_CHANNELS, training=False)
+
+    # TODO: finish testing this
+    pred = model(test_input)
+
+if __name__ == '__main__':
+    main()
