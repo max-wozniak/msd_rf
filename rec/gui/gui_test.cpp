@@ -6,121 +6,67 @@
 #include <SFML/Graphics.hpp>
 
 // WINDOW SIZE
-#define N 20000
+#define N 150
 
 //#define M_PI    3.1415926535897932384626433
 #define EPSILON 0.00000005f
 
 int main (void) {
-	/*
-	fftw_complex *in, *out, *in2;
-	fftw_plan p, q;
-	int i;
-	float tim;
-	clock_t start, end;
+	fftw_complex *in, *out;
+	fftw_plan p;
 	
 	// N = 20000
-	
 	in  = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * N);
 	out = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * N);
-	in2 = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * N);
 	// when used in our application, use the FFTW_MEASURE flag instead for optimal performance
 	p = fftw_plan_dft_1d(N, in, out, FFTW_FORWARD, FFTW_ESTIMATE);
-	q = fftw_plan_dft_1d(N, out, in2, FFTW_BACKWARD, FFTW_ESTIMATE);
 	// populate in with cosine wave
-	for (i = 0; i < N; i++) {
+	for (int i = 0; i < N; i++) {
 		// REAL COMPONENT
-		in[i][0] = cos(433050000*2*M_PI*i/N) + 5*cos(433150000*2*M_PI*i/N+M_PI/2.0); 
+		in[i][0] = cos(50*2*M_PI*i/N) + 5*cos(2*2*M_PI*i/N+M_PI/2.0); 
 		// IMAGINARY COMPONENT
 		in[i][1] = 0;
 	}
-	*/
+	// execute FFT!
+	fftw_execute(p);
+	
+	int windowWidth = 800;
+	int windowHeight = 600;
 
 	// create window
-	sf::RenderWindow window(sf::VideoMode(800, 600), "SFML window");
+	sf::RenderWindow window(sf::VideoMode(windowWidth, windowHeight), "Frequency Spectrum");
+	sf::VertexArray graph(sf::LineStrip);
 	
-	// load a sprite to display
-	sf::Texture texture;
-	if (!texture.loadFromFile("IMG.jpg"))
-		return EXIT_FAILURE;
-	sf::Sprite sprite(texture);
-
-	// create GUI
-	sf::Font font;
-	if (!font.loadFromFile("ARIAL.TTF"))
-		return EXIT_FAILURE;
-	sf::Text text("Hello SFML", font, 50);
-
-	// Start the game loop
-	while (window.isOpen()) {
-		// Process events
-		sf::Event event;
-		while (window.pollEvent(event)) {
-			// Close window: exit
-			window.close();
-		}
-	
-		// clear screen
-		window.clear();
-
-		// draw the sprite
-		window.draw(sprite);
-
-		// draw the string
-		window.draw(text);
-
-		// update the window
-		window.display();
-	}
-
-	return EXIT_SUCCESS;
-
-	/*
-	// execute FFT!
-	start = clock();
-	fftw_execute(p);
-	end = clock();
-	tim = (float) (end - start) * 1000 / (float) CLOCKS_PER_SEC;
-	// execute IFFT!
-	fftw_execute(q);
-
-	// print original signal
-	printf("ORIGINAL INPUT:\n");
-	for (i = 0; i < N; i++)
-		printf("index: %d, val = %+9.5f %+9.5f I\n", i, in[i][0], in[i][1]);
-	// print freq. domain signal
-	printf("FFT OUTPUT:\n");
-	for (i = 0; i < N; i++)
-		printf("index: %d, val = %+9.5f %+9.5f I\n", i, out[i][0], out[i][1]);
-
-	// normalize recovered signal
-	for (i = 0; i < N; i++) {
-		in2[i][0] *= 1./N;
-		in2[i][1] *= 1./N;
-	}
-
-	// print recovered signal
-	printf("IFFT OUTPUT:\n");
-	for (i = 0; i < N; i++)
-		printf("index: %d, val = %+9.5f %+9.5f I\n", i, in2[i][0], in2[i][1]);
+	// Plot the frequency spectrum
+	for (int i = 0; i < N; i++) {
+		// Calculate y value for the current x
+		float y = (float) out[i][0];
 		
-	// self checking stuff
-	printf("\n");
-	for (i = 0; i < N; i++) {
-		if ((fabs(in[i][0] - in2[i][0]) >= EPSILON) || (fabs(in[i][1] - in2[i][1]) >= EPSILON)) {
-			printf("ERROR! Input signal does not match reconstructed!\n");
-			return 1;			
-		} 	
-	}	
-	printf("PASS! Input signal matches reconstructed!\n");
-	printf("Total time to compute FFT: %+9.5f ms\n", tim);
+		// Map x and y values to window coordinates
+		float xPos = ((float) i) / N * windowWidth;
+		float yPos = (windowHeight - (y + 1) / 2 * windowHeight) + (windowHeight * 0.4);
+		
+		// Add point to graph
+		graph.append(sf::Vertex(sf::Vector2f(xPos, yPos), sf::Color::Red));
+	}
+
+	// Main loop
+	while (window.isOpen()) {
+        sf::Event event;
+        while (window.pollEvent(event)) {
+            if (event.type == sf::Event::Closed) {
+                window.close();
+            }
+        }
+
+        window.clear(sf::Color::White);
+        window.draw(graph);
+        window.display();
+	}
 
 	fftw_destroy_plan(p);
-	fftw_destroy_plan(q);
 	fftw_free(in);
 	fftw_free(out);
-	fftw_free(in2);
 
-	return 0;
-	*/
+	return EXIT_SUCCESS;
 }
