@@ -1,0 +1,1 @@
+/usr/bin/cc    CMakeFiles/rtl_map.dir/rtl_map.c.o  -o rtl_map -lfftw3 -lrtlsdr -lm 
