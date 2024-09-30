@@ -1,0 +1,32 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/mendel/rtl_map/rtl_map.c
+stdlib.h
+-
+math.h
+-
+signal.h
+-
+string.h
+-
+complex.h
+-
+unistd.h
+-
+stdarg.h
+-
+time.h
+-
+limits.h
+-
+fftw3.h
+-
+rtl-sdr.h
+-
+
