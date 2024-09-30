@@ -11,6 +11,7 @@ NUM_DIVS = 13
 BATCH_SIZE = 1
 
 test_input = tf.random.uniform((BATCH_SIZE, NUM_INPUTS, NUM_CHANNELS))
+print ("Input size: ", tf.shape(test_input))
 
 # Define the model architecture
 
@@ -121,5 +122,6 @@ def compute_loss(label, pred):
 # Compile the model
 
 model.compile(optimizer='adam', loss=compute_loss, metrics=['accuracy'])
+tf.saved_model.save(model, 'c:/Users/Tyler/Documents/GitHub/msd_rf/CNN/')
 pred = model(test_input)
-print(pred[0, 0, :])
+print("Output size: ", tf.shape(pred))
