@@ -41,9 +41,10 @@ static fftw_plan fftwp; /**!
  			 * to compute the FFT 
  			 */ 
 static fftw_complex *in, *out; /*!< Input and output arrays of the transform */
-static FILE *gnuplotPipe, *file; /**!
+static FILE *gnuplotPipe, *file, *rfile; /**!
 				  * Pipe for communicating with gnuplot
-				  * File to write 
+				  * File to write
+          * File to read
 				  */
 static struct sigaction sig_act; /*!< For changing the signal actions */
 static const int n_read = NUM_READ; /*!< Sample count & data points & FFT size */
@@ -65,7 +66,8 @@ static int n, /*!< Used at raw I/Q data to complex conversion */
 			     * of the ADCs and 1/f noise. (optional)
 			     */
 	_log_colors = 1, /*!< [ARG] Use colored flags while logging (optional) */
-	_write_file = 0; /*!< [ARG] Write output of the FFT to a file|stdout (optional) */
+	_write_file = 0, /*!< [ARG] Write output of the FFT to a file|stdout (optional) */
+  _read_file = 0; /*!< [ARG] Read file input time-domain samples instead of device handle (optional) */
 static float amp, db; /*!< Amplitude & dB */
 static char t_buf[16], /*!< Time buffer, used for getting current time */
 	*_filename, /*!< [ARG] File name to write samples (optional) */
@@ -80,6 +82,7 @@ static char t_buf[16], /*!< Time buffer, used for getting current time */
 enum log_level {INFO, ERROR, FATAL}; /*!< Log level enumeration */
 static va_list vargs;  /*!< Holds information about variable arguments */
 static time_t raw_time; /*!< Represents time value */
+static char* _in_file = NULL; /*!< Input sample file */
 /**!
  * 'Bin' is created from 'SampleBin' struct with
  * the purpose of storing sample IDs and values to
@@ -312,8 +315,16 @@ static int open_file(){
 				log_error("Failed to open %s\n", _filename);
 				exit(1);
 			}
-   		}
+ 		}
 	}
+  if (_in_file != NULL) {
+    _read_file = 1;
+    rfile = fopen(_in_file, "r+");
+    if (!rfile) {
+      log_error("Failed to open %s\n", _in_file);
+      exit(1);
+    }
+  }
 	return 0;
 }
 /*!
@@ -487,6 +498,25 @@ static void async_read_callback(uint8_t *n_buf, uint32_t len, void *ctx){
 	 * =========================
 	 */
 }
+
+/*!
+ * 1. Read set of samples from file
+ * 2. if read is successful, send to create_fft. otherwise, break
+ * 3. after create_fft, sleep for the provided refresh rate
+ * 4. repeat
+ */
+void read_plot_data() {
+	uint8_t file_buf [n_read];
+	size_t samples = fread(file_buf, sizeof(uint8_t), n_read, rfile);
+	while (samples == n_read) {
+		create_fft(n_read, file_buf);
+		usleep(1000*_refresh_rate);
+		samples = fread(file_buf, sizeof(uint8_t), n_read, rfile);
+	}
+	log_info("Done, exiting...\n");
+	do_exit();	
+}
+
 /*!
  * Print usage and exit.
  */
@@ -504,6 +534,7 @@ static void print_usage(){
 				  "\t[-O disable offset tuning (default: on)]\n"
 				  "\t[-T turn off log colors (default: on)]\n"
 				  "\t[-h show this help message and exit]\n"
+				  "\t[-i input filename for reading TD samples from a bin file]\n"
                   "\t[filename (a '-' dumps samples to stdout)]\n\n";
     fprintf(stderr, "%s", usage);
     exit(0);
@@ -517,7 +548,7 @@ static void print_usage(){
  */
 static int parse_args(int argc, char **argv){
 	int opt;
-	while ((opt = getopt(argc, argv, "d:s:f:g:r:n:DCMOTh")) != -1) {
+	while ((opt = getopt(argc, argv, "d:s:f:g:r:n:DCMOThi:")) != -1) {
         switch (opt) {
             case 'd':
                 _dev_id = atoi(optarg);
@@ -556,12 +587,21 @@ static int parse_args(int argc, char **argv){
             case 'h':
                 print_usage();
                 break;
+            case 'i':
+				_in_file = (char *) malloc(strlen(optarg) + 1);
+				if (_in_file == NULL) {
+					fprintf(stderr, "Memory allocation failed\n");
+					exit(1);
+				}
+				strcpy(_in_file, optarg);
+				_cont_read = 1;
+				break;
             default:
                 print_usage();
                 break;
         }
     }
-	/**! Center frequency (-f) is mandatory. */
+	/**! Center frequency (-f) is mandatory */
 	if (!_center_freq)
 		print_usage();
 	_filename = argv[optind];
@@ -576,9 +616,19 @@ static int parse_args(int argc, char **argv){
  */
 void main(int argc, char **argv){
 	parse_args(argc, argv);
-	register_signals();
-	configure_gnuplot();
-	configure_rtlsdr();
-	open_file();
-	rtlsdr_read_async(dev, async_read_callback, NULL, 0, n_read * n_read);
+	if (_in_file == NULL) {
+		register_signals();
+		configure_gnuplot();
+		configure_rtlsdr();
+		open_file();
+		rtlsdr_read_async(dev, async_read_callback, NULL, 0, n_read * n_read);
+	} else {
+		register_signals();
+		configure_gnuplot();
+		configure_rtlsdr();
+		open_file();
+		read_plot_data();
+		fclose(rfile);
+		free(_in_file);
+	}
 }
