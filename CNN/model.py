@@ -1,20 +1,24 @@
 import tensorflow as tf
+import numpy as np
 
 from tensorflow.keras.layers import Conv1D, MaxPooling1D, Flatten, Dense, Dropout, Input
+from sklearn.model_selection import train_test_split
 
-NUM_INPUTS = 20000
+NUM_INPUTS = 1000
 NUM_CHANNELS = 1
 
-NUM_CLASSES = 3
-NUM_DIVS = 13
+NUM_CLASSES = 2
+NUM_DIVS = 1
 
 BATCH_SIZE = 1
+NUM_EPOCHS = 5
 
-test_input = tf.random.uniform((BATCH_SIZE, NUM_INPUTS, NUM_CHANNELS))
+test_input = tf.random.uniform((BATCH_SIZE, NUM_INPUTS, NUM_CHANNELS), dtype=float)
 print ("Input size: ", tf.shape(test_input))
 
 # Define the model architecture
 
+'''
 class Decode(tf.keras.Layer):
     def call(self, x):
         pred = tf.reshape(x, (BATCH_SIZE, NUM_DIVS, (NUM_CLASSES + 3)))
@@ -24,42 +28,33 @@ class Decode(tf.keras.Layer):
         pred_class = tf.nn.softmax(pred[:, :, 3:], axis=-1)
 
         return tf.concat([pred_x, pred_w, pred_conf, pred_class], axis=-1)
+'''
 
 model = tf.keras.Sequential([
 
     Input((NUM_INPUTS, NUM_CHANNELS)),
 
-    Conv1D(filters=64, kernel_size=3, activation='relu'),
-
-    Conv1D(filters=64, kernel_size=3, activation='relu'),
+    Conv1D(filters=32, kernel_size=3, activation='relu'),
 
     MaxPooling1D(pool_size=2),
 
-    Conv1D(filters=128, kernel_size=3, activation='relu'),
-
-    Conv1D(filters=128, kernel_size=3, activation='relu'),
-
-    MaxPooling1D(pool_size=2),
-
-    Conv1D(filters=256, kernel_size=3, activation='relu'),
-
-    Conv1D(filters=256, kernel_size=3, activation='relu'),
+    Conv1D(filters=64, kernel_size=3, activation='relu'),
 
     MaxPooling1D(pool_size=2),
 
     Flatten(),
 
-    Dense(512, activation='relu'),
+    Dense(128, activation='relu'),
 
     Dropout(0.5),
 
-    Dense(256, activation='relu'),
+    Dense(32, activation='relu'),
 
     Dropout(0.5),
 
-    Dense(2*NUM_CLASSES*NUM_DIVS),
+    Dense(NUM_CLASSES*NUM_DIVS)
 
-    Decode()
+    #,Decode()
 
 ])
 
@@ -117,11 +112,25 @@ def compute_loss(label, pred):
 
     return iou_loss + conf_loss + prob_loss
 
+
+def train(model):
+    data = np.genfromtxt('TrainData.csv', delimiter=',', dtype=float)
+    classes = np.array((data[:, -1]), dtype=int)
+    print(len(classes), classes.max())
+    onehot_classes = np.zeros((len(classes), classes.max()), dtype=int)
+    # Classes start at index 1 in the file, not 0
+    onehot_classes[np.arange(classes.size)-1, classes-1] = 1
+    data = data[:, 0:-1]
+    x_train, x_val, y_train, y_val = train_test_split(data, onehot_classes, test_size=0.2, shuffle=True)
+    print(x_train.size, x_val.size, y_train.size, y_val.size)
+    model.fit(x_train, y_train, batch_size=BATCH_SIZE, validation_data=(x_val, y_val), epochs=NUM_EPOCHS, steps_per_epoch=100)
+
     
 
 # Compile the model
-
-model.compile(optimizer='adam', loss=compute_loss, metrics=['accuracy'])
-tf.saved_model.save(model, 'c:/Users/Tyler/Documents/GitHub/msd_rf/CNN/')
-pred = model(test_input)
-print("Output size: ", tf.shape(pred))
+if __name__ == "__main__":
+    model.compile(optimizer='adam', loss='BinaryCrossentropy', metrics=['accuracy'])
+    train(model)
+    tf.saved_model.save(model, '')
+    pred = model(test_input)
+    print("Output size: ", tf.shape(pred))
