@@ -1,8 +1,10 @@
 import tensorflow as tf
 import numpy as np
+from keras import backend as K
 
 from tensorflow.keras.layers import Conv1D, MaxPooling1D, Flatten, Dense, Dropout, Input
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import f1_score
 
 NUM_INPUTS = 1000
 NUM_CHANNELS = 1
@@ -11,10 +13,8 @@ NUM_CLASSES = 2
 NUM_DIVS = 1
 
 BATCH_SIZE = 1
-NUM_EPOCHS = 5
+NUM_EPOCHS = 10
 
-test_input = tf.random.uniform((BATCH_SIZE, NUM_INPUTS, NUM_CHANNELS), dtype=float)
-print ("Input size: ", tf.shape(test_input))
 
 # Define the model architecture
 
@@ -52,7 +52,7 @@ model = tf.keras.Sequential([
 
     Dropout(0.5),
 
-    Dense(NUM_CLASSES*NUM_DIVS)
+    Dense(NUM_CLASSES*NUM_DIVS, activation='softmax')
 
     #,Decode()
 
@@ -125,12 +125,39 @@ def train(model):
     print(x_train.size, x_val.size, y_train.size, y_val.size)
     model.fit(x_train, y_train, batch_size=BATCH_SIZE, validation_data=(x_val, y_val), epochs=NUM_EPOCHS, steps_per_epoch=100)
 
-    
+
+def recall_m(y_true, y_pred):
+    true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
+    possible_positives = K.sum(K.round(K.clip(y_true, 0, 1)))
+    recall = true_positives / (possible_positives + K.epsilon())
+    return recall
+
+def precision_m(y_true, y_pred):
+    true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
+    predicted_positives = K.sum(K.round(K.clip(y_pred, 0, 1)))
+    precision = true_positives / (predicted_positives + K.epsilon())
+    return precision
+
+def f1_m(y_true, y_pred):
+    '''
+    precision = precision_m(y_true, y_pred)
+    recall = recall_m(y_true, y_pred)
+    return 2*((precision*recall)/(precision+recall+K.epsilon())) 
+    '''
+    return tf.math.confusion_matrix(y_true, y_pred, num_classes=NUM_CLASSES, dtype=tf.int32)
+
+def confusion(model):
+    data = np.genfromtxt('TrainData.csv', delimiter=',', dtype=float)
+    classes = tf.convert_to_tensor(data[:, -1]-1, dtype=tf.int32)
+    data = data[:, 0:-1]
+    y_pred = model(data)
+    y_pred = tf.math.argmax(y_pred, 1)
+    print(f1_score(classes, y_pred, average='macro', labels=[0, 1]))
+    return tf.math.confusion_matrix(classes, y_pred)
 
 # Compile the model
 if __name__ == "__main__":
-    model.compile(optimizer='adam', loss='BinaryCrossentropy', metrics=['accuracy'])
+    model.compile(optimizer='adam', loss='BinaryCrossentropy', metrics=['accuracy', f1_m])
     train(model)
+    print(confusion(model))
     tf.saved_model.save(model, '')
-    pred = model(test_input)
-    print("Output size: ", tf.shape(pred))
