@@ -1,9 +1,12 @@
 #include <stdio.h>
 #include "classifier.h"
 
+FILE* fptr;
+
 int main()
 {
-    classifier_t* cls = init_classifier(1, 0);
+    fptr = fopen("model.mdl", "r");
+    classifier_t* cls = init_classifier(fptr);
     if(cls == NULL)
     {
         return 1;
@@ -20,6 +23,7 @@ int main()
     printf("Test1 Class: %u\r\n Test2 Class: %u\r\n", classify(cls, &test1), classify(cls, &test2));
 
     destroy_classifier(cls);
+    fclose(fptr);
 
     return 0;
 }

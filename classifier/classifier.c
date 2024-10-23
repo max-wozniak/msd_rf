@@ -1,26 +1,48 @@
 #include <stdlib.h>
+#include <string.h>
 #include "classifier.h"
 
+
+#define SBUF_SIZE 1024
+const char* delim = " ";
+
 // Create classifier
-classifier_t* init_classifier(uint8_t order, uint8_t orient)
+classifier_t* init_classifier(FILE* fptr)
 {
+    char fstr[SBUF_SIZE];
+    char* token;
+
+    fgets(fstr, SBUF_SIZE, fptr);
+
     classifier_t* cls = (classifier_t*)malloc(sizeof(classifier_t));
     if(cls == NULL)
     {
         return NULL;
     }
-    cls->order = order;
-    cls->positive_orientation = orient;
-    cls->coeffs = (float*)malloc(NUM_FEATURES*order*sizeof(float));
+
+    // Get the first token
+    token = strtok(fstr, delim);
+    cls->order = (uint8_t)atoi(token);
+
+    cls->coeffs = (float*)calloc(NUM_FEATURES*cls->order, sizeof(float));
     if(cls->coeffs == NULL)
     {
         return NULL;
     }
+    
+    token = strtok(NULL, delim);
+    cls->positive_orientation = (uint8_t)atoi(token);
 
-    // TODO: Add coefficient reading from file
-    for (int i = 0; i < NUM_FEATURES*order+1; i++)
-    {
-        cls->coeffs[i] = (float)(i-2);
+    token = strtok(NULL, delim);
+    // Continue processing tokens until the end of the string
+    uint8_t i = 0;
+    while (token != NULL) {
+        // Convert the token to a float
+        cls->coeffs[i] = atof(token);
+
+        // Get the next token
+        token = strtok(NULL, delim);
+        i++;
     }
 
     return cls;

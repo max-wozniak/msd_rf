@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stdio.h>
 
 #define NUM_FEATURES 4
 
@@ -13,7 +14,7 @@ typedef struct {
 } classifier_t;
 
 uint8_t classify(classifier_t* cls, data_point_t* input);
-classifier_t* init_classifier(uint8_t order, uint8_t orient);
+classifier_t* init_classifier(FILE* fptr);
 void destroy_classifier(classifier_t* cls);
 
 
