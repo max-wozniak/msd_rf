@@ -69,6 +69,7 @@ static int n, /*!< Used at raw I/Q data to complex conversion */
 	_write_file = 0, /*!< [ARG] Write output of the FFT to a file|stdout (optional) */
   _read_file = 0; /*!< [ARG] Read file input time-domain samples instead of device handle (optional) */
 static float amp, db; /*!< Amplitude & dB */
+static const int y_range = 50; // y-axis range for GNUplot 
 static char t_buf[16], /*!< Time buffer, used for getting current time */
 	*_filename, /*!< [ARG] File name to write samples (optional) */
 	*log_levels[] = { 
@@ -195,11 +196,13 @@ static int gnuplot_exec(char *format, ...){
 static int configure_gnuplot(){
 	if (!_use_gnuplot)
 		return 1;
-	gnuplotPipe = popen("gnuplot -persistent", "w");
+	gnuplotPipe = popen("gnuplot -persist", "w");
 	if (!gnuplotPipe) {
 		log_error("Failed to open gnuplot pipe.");
 		exit(1);
 	}
+	// reset gnuplot
+	gnuplot_exec("reset\n");
 	gnuplot_exec("set title 'rtl-map' enhanced\n");
 	gnuplot_exec("set xlabel 'Frequency (MHz)'\n");
 	gnuplot_exec("set ylabel 'Amplitude (dB)'\n");
@@ -218,6 +221,8 @@ static int configure_gnuplot(){
 		center_mhz-step_size, 
 		center_mhz, 
 		center_mhz+step_size);
+	gnuplot_exec("set yrange [0:%d]\n", y_range);
+	//gnuplot_exec("set terminal wxt\n");
 	return 0;
 }
 /*!
@@ -405,20 +410,17 @@ static void create_fft(int sample_c, uint8_t *buf){
 		log_info("Reading samples...\n");
 	if(_use_gnuplot)
 		gnuplot_exec("plot '-' smooth frequency with linespoints lt -1 notitle\n");
-	for (int i=0; i < sample_c; i++){
-		/**! 
-		 * Compute magnitude from complex values. [Sqr(Re^2 + Im^2)]
-		 * Compute amplitude (dB) from magnitude. [10 * Log(magnitude)]
-		 *
-		 * TODO #5: Check correctness of this calculation.
-		 */
+	//printf("NEW SAMPLE\n");
+	for (int i=0; i < 512; i++){
 		out_r = creal(out[i]) * creal(out[i]);
 		out_i = cimag(out[i]) * cimag(out[i]);
 		amp = sqrt(out_r + out_i);
+		//printf("out_r = %d, out_i = %d, amp = %f\n", out_r, out_i, amp);
 		if (!_mag_graph)
-			db = 10 * log10(amp);
+			db = 20 * log10(amp);
 		else
 			db = amp;
+		//printf("y = %f, x = %d\n", db, i+1);
 		if(_write_file)
 			fprintf(file, "%d	%f\n", i+1, db);
 		if(_use_gnuplot)
@@ -465,10 +467,15 @@ static void create_fft(int sample_c, uint8_t *buf){
  * \param ctx context which is given at rtlsdr_read_async(...)
  */
 static void async_read_callback(uint8_t *n_buf, uint32_t len, void *ctx){
+	int i;
 	create_fft(n_read, n_buf);
+	//for (i = 0; i < 512; i = i + 1) {
+	//	printf("x = %d, y = %d ", i, n_buf[i]);
+	//}
+	//printf("\n");
 	if (_cont_read && read_count < _num_read){
 		usleep(1000*_refresh_rate);
-		rtlsdr_read_async(dev, async_read_callback, NULL, 0, n_read * n_read);
+		rtlsdr_read_async(dev, async_read_callback, NULL, 0, n_read * 10);
 	}else{
 		log_info("Done, exiting...\n");
 		do_exit();
@@ -621,11 +628,11 @@ void main(int argc, char **argv){
 		configure_gnuplot();
 		configure_rtlsdr();
 		open_file();
-		rtlsdr_read_async(dev, async_read_callback, NULL, 0, n_read * n_read);
+		rtlsdr_read_async(dev, async_read_callback, NULL, 0, n_read * 10);
 	} else {
 		register_signals();
 		configure_gnuplot();
-		configure_rtlsdr();
+		//configure_rtlsdr();
 		open_file();
 		read_plot_data();
 		fclose(rfile);
