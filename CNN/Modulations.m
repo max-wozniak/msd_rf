@@ -1,4 +1,4 @@
-NUM_SIGNALS = 1000;
+NUM_SIGNALS = 10000;
 mods = ["fm" "am"];
 NUM_MODS = length(mods);
 
@@ -17,7 +17,7 @@ for mod = 1:NUM_MODS
         m = sin(w*t) + randn(size(t))/6;
         u = [modulate(m, fc, fs, mods(mod)) mod];
     
-        D(NUM_MODS*mod + i, :) = u;
+        D(NUM_SIGNALS*(mod-1) + i, :) = u;
     end
 end
 
