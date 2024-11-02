@@ -29,12 +29,14 @@
 #include <fftw3.h>
 #include <rtl-sdr.h>
 
-#define NUM_READ 512 
+// previously 512
+#define NUM_READ 512
 #define log_info(...) print_log(INFO, __VA_ARGS__)
 #define log_error(...) print_log(ERROR, __VA_ARGS__)
 #define log_fatal(...) print_log(FATAL, __VA_ARGS__)
 
 static rtlsdr_dev_t *dev; /*!< RTL-SDR device */
+static rtlsdr_dev_t *dev2; /*!< RTL-SDR device */
 static fftw_plan fftwp; /**!
 			 * FFT plan that will contain 
  			 * all the data that FFTW needs 
@@ -48,11 +50,13 @@ static FILE *gnuplotPipe, *file, *rfile; /**!
 				  */
 static struct sigaction sig_act; /*!< For changing the signal actions */
 static const int n_read = NUM_READ; /*!< Sample count & data points & FFT size */
+static const int buf_size = n_read * 10;
 static int n, /*!< Used at raw I/Q data to complex conversion */
 	read_count = 0, /*!< Current read count */
 	out_r, out_i, /*!< Real and imaginary parts of FFT *out values */
 	_center_freq, /*!< [ARG] RTL-SDR center frequency (mandatory) */
 	_dev_id = 0, /*!< [ARG] RTL-SDR device ID (optional) */
+	_dev_id2 = 0, /*!< [ARG] RTL-SDR device ID (optional) */
 	_samp_rate = NUM_READ * 4000, /*!< [ARG] Sample rate (optional) */
 	_gain = 14, /*!< [ARG] Device gain (optional) */
 	_refresh_rate = 500, /*!< [ARG] Refresh interval for continuous read (optional) */
@@ -68,8 +72,7 @@ static int n, /*!< Used at raw I/Q data to complex conversion */
 	_log_colors = 1, /*!< [ARG] Use colored flags while logging (optional) */
 	_write_file = 0, /*!< [ARG] Write output of the FFT to a file|stdout (optional) */
   _read_file = 0; /*!< [ARG] Read file input time-domain samples instead of device handle (optional) */
-static float amp, db; /*!< Amplitude & dB */
-static const int y_range = 50; // y-axis range for GNUplot 
+static const int y_range = 100; // y-axis range for GNUplot 
 static char t_buf[16], /*!< Time buffer, used for getting current time */
 	*_filename, /*!< [ARG] File name to write samples (optional) */
 	*log_levels[] = { 
@@ -208,19 +211,16 @@ static int configure_gnuplot(){
 	gnuplot_exec("set ylabel 'Amplitude (dB)'\n");
 	/**!
 	* Compute center frequency in MHz. [Center freq./10^6]
-	* Step size = [(512*10^3)/10^6] = 0.512
+	* Step size = [(3584*10^3)/10^6] = 3.854
 	* Substract and add step size to center frequency for
 	* finding max and min distance from center frequency.
-	*
-	* NOTE: I don't know if this is the right way determine the min/max points.
-	* TODO #4: Check correctness of this calculation.
 	*/
 	float center_mhz = _center_freq / pow(10, 6);
 	float step_size = (n_read * pow(10, 3))  / pow(10, 6);
-	gnuplot_exec("set xtics ('%.1f' 1, '%.1f' 256, '%.1f' 512)\n", 
+	gnuplot_exec("set xtics ('%.1f' 1, '%.1f' %d, '%.1f' %d)\n", 
 		center_mhz-step_size, 
-		center_mhz, 
-		center_mhz+step_size);
+		center_mhz, n_read/2,
+		center_mhz+step_size, n_read);
 	gnuplot_exec("set yrange [0:%d]\n", y_range);
 	//gnuplot_exec("set terminal wxt\n");
 	return 0;
@@ -353,6 +353,7 @@ static int cmp_sample(const void * a, const void * b){
  * \param buf array that contains I/Q samples
  */
 static void create_fft(int sample_c, uint8_t *buf){
+        float amp, db; /*!< Amplitude & dB */
 	/**! 
 	 * Configure FFTW to convert the samples in time domain to frequency domain. 
 	 * Allocate memory for 'in' and 'out' arrays.
@@ -411,7 +412,7 @@ static void create_fft(int sample_c, uint8_t *buf){
 	if(_use_gnuplot)
 		gnuplot_exec("plot '-' smooth frequency with linespoints lt -1 notitle\n");
 	//printf("NEW SAMPLE\n");
-	for (int i=0; i < 512; i++){
+	for (int i=0; i < n_read; i++){
 		out_r = creal(out[i]) * creal(out[i]);
 		out_i = cimag(out[i]) * cimag(out[i]);
 		amp = sqrt(out_r + out_i);
@@ -475,7 +476,7 @@ static void async_read_callback(uint8_t *n_buf, uint32_t len, void *ctx){
 	//printf("\n");
 	if (_cont_read && read_count < _num_read){
 		usleep(1000*_refresh_rate);
-		rtlsdr_read_async(dev, async_read_callback, NULL, 0, n_read * 10);
+		rtlsdr_read_async(dev, async_read_callback, NULL, 0, buf_size);
 	}else{
 		log_info("Done, exiting...\n");
 		do_exit();
@@ -628,7 +629,7 @@ void main(int argc, char **argv){
 		configure_gnuplot();
 		configure_rtlsdr();
 		open_file();
-		rtlsdr_read_async(dev, async_read_callback, NULL, 0, n_read * 10);
+		rtlsdr_read_async(dev, async_read_callback, NULL, 0, buf_size);
 	} else {
 		register_signals();
 		configure_gnuplot();
