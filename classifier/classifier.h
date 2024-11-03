@@ -9,7 +9,7 @@ typedef struct {
 
 typedef struct {
     uint8_t order;
-    uint8_t positive_orientation;
+    int polarity;
     float* coeffs;
 } classifier_t;
 

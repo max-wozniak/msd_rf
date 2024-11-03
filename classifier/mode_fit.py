@@ -8,6 +8,7 @@ Created on Sat Nov  2 15:04:56 2024
 SAMPLES_PER_SPECTRUM = 512
 AVERAGE_ORDER = 12
 NUM_FEATURES = 4
+KERNEL_ORDER = 1
 TEST_INDEX = -1
 
 BW_THRESH = 23.0
@@ -113,7 +114,10 @@ model = svm.LinearSVC(dual=False, max_iter=10000)
 model.fit(train_data, train_labels)
 
 # Save the decision boundary parameters to a file
-polarity = np.sign(model.predict(np.zeros((1, NUM_FEATURES))))
-model_params = np.concatenate((model.coef_.flatten(), model.intercept_, polarity)).reshape(1, -1)
-np.savetxt(model_file, model_params)
+polarity = np.sign(model.intercept_)[0] if model.predict(np.zeros((1, NUM_FEATURES))) == 1 else -np.sign(model.intercept_)[0]
+model_params = np.concatenate(
+    ([int(KERNEL_ORDER)], [int(polarity)], model.coef_.flatten(), model.intercept_), 
+    dtype=object).reshape(1, -1)
+fmt_str = "%d %d" + (KERNEL_ORDER*NUM_FEATURES+1)*" %f"
+np.savetxt(model_file, model_params, fmt=fmt_str)
 

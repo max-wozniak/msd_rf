@@ -24,14 +24,14 @@ classifier_t* init_classifier(FILE* fptr)
     token = strtok(fstr, delim);
     cls->order = (uint8_t)atoi(token);
 
-    cls->coeffs = (float*)calloc(NUM_FEATURES*cls->order, sizeof(float));
+    cls->coeffs = (float*)calloc(NUM_FEATURES*cls->order + 1, sizeof(float));
     if(cls->coeffs == NULL)
     {
         return NULL;
     }
     
     token = strtok(NULL, delim);
-    cls->positive_orientation = (uint8_t)atoi(token);
+    cls->polarity = atoi(token);
 
     token = strtok(NULL, delim);
     // Continue processing tokens until the end of the string
@@ -72,7 +72,7 @@ uint8_t classify(classifier_t* cls, data_point_t* input)
         }
     }
 
-    output = (cls->positive_orientation > 0) ? output : output*(-1.0);
+    output *= cls->polarity;
 
     // Get classification
     return (output > 0.0) ? 1 : 0;
