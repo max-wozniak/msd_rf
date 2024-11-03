@@ -19,7 +19,9 @@ import matplotlib.pyplot as plt
 from os import listdir
 from os.path import isfile, join
 
+# Import data from files
 train_path = './train'
+model_file = './model.mdl'
 infiles = [join(train_path, f) for f in listdir(train_path) if isfile(join(train_path, f)) and '.out' in f]
 
 train_data = np.array([[]])
@@ -27,28 +29,31 @@ test_data = np.array([[]])
 train_labels = np.array([])
 test_labels = np.array([])
 
+# Preprocess the data
 for infile in infiles:
     raw_gain = np.genfromtxt(infile, dtype=float)[:, 1]
     bad_indices = raw_gain < 0.0
     raw_gain[bad_indices] = 0
     
+    # Sliding window average to smooth the FFT
     raw_gain = raw_gain.reshape( (SAMPLES_PER_SPECTRUM, -1) ).T
     average_filter = np.ones((AVERAGE_ORDER,), dtype=float)/AVERAGE_ORDER
-    
     avg_gain = np.zeros((raw_gain.shape[0], raw_gain.shape[1] - average_filter.shape[0] + 1))
-    
     
     for i in range(raw_gain.shape[0]):
         avg_gain[i, :] = np.convolve(raw_gain[i, :], average_filter, mode='valid')
     
+    
+    # Find the gain differential and remove the first avg_gain entry to match sizes
     dG = np.abs(avg_gain[1:, :] - avg_gain[0:avg_gain.shape[0]-1, :])
     avg_gain = avg_gain[1:, :]
     
     train_data_tmp = np.zeros((avg_gain.shape[0], NUM_FEATURES))
         
+    
+    # Obtain features (Width, Variance, Mean, dG Maximum)
     fmin = 0
     fmax = avg_gain.shape[1]-1    
-    
     for i in range(avg_gain.shape[0]):
         if avg_gain[i][0] < BW_THRESH:
             for j in range(avg_gain.shape[1]-1):
@@ -64,10 +69,13 @@ for infile in infiles:
         train_data_tmp[i, 1] = np.var(avg_gain[i, fmin+20:fmax+1-20])
         train_data_tmp[i, 2] = np.mean(avg_gain[i, fmin+20:fmax+1-20])
         train_data_tmp[i, 3] = np.max(dG[i, :])
+     
         
+    # Assign labels
     label = 1 if 'fm.out' in infile else 0
     labels = np.ones((train_data_tmp.shape[0], 1), dtype=int)*label
     
+    # Split the data into training and validation subsets
     xtrain, xtest, ytrain, ytest = train_test_split(train_data_tmp, labels, test_size=0.15)
     
     if train_data.shape[1] == 0:
@@ -93,15 +101,19 @@ print('Signal Std: ', np.var(avg_gain[-1, fmin+20:fmax+1-20]))
 print('Signal Avg: ', np.mean(avg_gain[-1, fmin+20:fmax+1-20]))
 '''
 
+train_labels = np.ravel(train_labels)
+test_labels = np.ravel(test_labels)
 
 plt.plot(avg_gain[TEST_INDEX,:])
 plt.plot(dG[TEST_INDEX, :])
 plt.show()
 
-print(test_labels.shape, train_labels.shape)
-
+# Fit the model
 model = svm.LinearSVC(dual=False, max_iter=10000)
 model.fit(train_data, train_labels)
-print(model.score(test_data, test_labels))
-print(model.coef_, model.intercept_)
+
+# Save the decision boundary parameters to a file
+polarity = np.sign(model.predict(np.zeros((1, NUM_FEATURES))))
+model_params = np.concatenate((model.coef_.flatten(), model.intercept_, polarity)).reshape(1, -1)
+np.savetxt(model_file, model_params)
 
