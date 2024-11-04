@@ -28,15 +28,15 @@
 /*! External libraries */
 #include <fftw3.h>
 #include <rtl-sdr.h>
+#include <pthread.h>
 
-// previously 512
+// 1536 for 3x band
 #define NUM_READ 512
 #define log_info(...) print_log(INFO, __VA_ARGS__)
 #define log_error(...) print_log(ERROR, __VA_ARGS__)
 #define log_fatal(...) print_log(FATAL, __VA_ARGS__)
 
-static rtlsdr_dev_t *dev; /*!< RTL-SDR device */
-static rtlsdr_dev_t *dev2; /*!< RTL-SDR device */
+static rtlsdr_dev_t *dev_arr[2]; /*!< RTL-SDR devices */
 static fftw_plan fftwp; /**!
 			 * FFT plan that will contain 
  			 * all the data that FFTW needs 
@@ -54,9 +54,6 @@ static const int buf_size = n_read * 10;
 static int n, /*!< Used at raw I/Q data to complex conversion */
 	read_count = 0, /*!< Current read count */
 	out_r, out_i, /*!< Real and imaginary parts of FFT *out values */
-	_center_freq, /*!< [ARG] RTL-SDR center frequency (mandatory) */
-	_dev_id = 0, /*!< [ARG] RTL-SDR device ID (optional) */
-	_dev_id2 = 0, /*!< [ARG] RTL-SDR device ID (optional) */
 	_samp_rate = NUM_READ * 4000, /*!< [ARG] Sample rate (optional) */
 	_gain = 14, /*!< [ARG] Device gain (optional) */
 	_refresh_rate = 500, /*!< [ARG] Refresh interval for continuous read (optional) */
@@ -72,7 +69,10 @@ static int n, /*!< Used at raw I/Q data to complex conversion */
 	_log_colors = 1, /*!< [ARG] Use colored flags while logging (optional) */
 	_write_file = 0, /*!< [ARG] Write output of the FFT to a file|stdout (optional) */
   _read_file = 0; /*!< [ARG] Read file input time-domain samples instead of device handle (optional) */
-static const int y_range = 100; // y-axis range for GNUplot 
+static const int y_range = 100; // y-axis range for GNUplot
+static const int _center_freq_arr[2] = {452300000, 457300000};
+static const int _dev_id_arr[2] = {0, 1};
+static int current_dev;
 static char t_buf[16], /*!< Time buffer, used for getting current time */
 	*_filename, /*!< [ARG] File name to write samples (optional) */
 	*log_levels[] = { 
@@ -87,20 +87,24 @@ enum log_level {INFO, ERROR, FATAL}; /*!< Log level enumeration */
 static va_list vargs;  /*!< Holds information about variable arguments */
 static time_t raw_time; /*!< Represents time value */
 static char* _in_file = NULL; /*!< Input sample file */
+
 /**!
  * 'Bin' is created from 'SampleBin' struct with
  * the purpose of storing sample IDs and values to
  * make data processing operations more easier and faster.
  * Such as classification and sorting.
- *
- * NOTE: This variable is not used properly yet,
- * just copying values and IDs in it for now.
  */
 typedef struct SampleBin { 
 	float val;
     int id;
 } Bin;
 static Bin sample_bin[NUM_READ]; /*!< 'Bin' array that will contain IDs and values */
+static Bin sample_bin_d1[NUM_READ];
+
+//void async_read_callback(uint8_t *n_buf, uint32_t len, void *ctx);
+//void print_usage();
+//int parse_args(int argc, char **argv)
+
 
 /*!
  * Print log message with time, level and text.
@@ -136,8 +140,9 @@ static int print_log(int level, char *format, ...){
  * Close pipe and file.
  * Exit.
  */
-static void do_exit(){
-	rtlsdr_cancel_async(dev);
+static void do_exit() {
+	rtlsdr_cancel_async(dev_arr[0]);
+    rtlsdr_cancel_async(dev_arr[1]);
 	if(_use_gnuplot)
 		pclose(gnuplotPipe);
 	if(_filename != NULL && strcmp(_filename, "-"))
@@ -204,25 +209,26 @@ static int configure_gnuplot(){
 		log_error("Failed to open gnuplot pipe.");
 		exit(1);
 	}
-	// reset gnuplot
-	gnuplot_exec("reset\n");
-	gnuplot_exec("set title 'rtl-map' enhanced\n");
-	gnuplot_exec("set xlabel 'Frequency (MHz)'\n");
-	gnuplot_exec("set ylabel 'Amplitude (dB)'\n");
-	/**!
-	* Compute center frequency in MHz. [Center freq./10^6]
-	* Step size = [(3584*10^3)/10^6] = 3.854
-	* Substract and add step size to center frequency for
-	* finding max and min distance from center frequency.
-	*/
-	float center_mhz = _center_freq / pow(10, 6);
-	float step_size = (n_read * pow(10, 3))  / pow(10, 6);
-	gnuplot_exec("set xtics ('%.1f' 1, '%.1f' %d, '%.1f' %d)\n", 
-		center_mhz-step_size, 
-		center_mhz, n_read/2,
-		center_mhz+step_size, n_read);
-	gnuplot_exec("set yrange [0:%d]\n", y_range);
-	//gnuplot_exec("set terminal wxt\n");
+    //for (int i = 0; i < 2; i = i + 1) {
+    //    gnuplot_exec("set terminal qt %d\n", i);
+    //    gnuplot_exec("set title 'Channel %d Spectrum (MHz)' enhanced\n", i + 1);
+    //    //gnuplot_exec("set xlabel 'Frequency (MHz)'\n");
+    //    gnuplot_exec("set ylabel 'Gain (dB)'\n");
+    //    /**!
+    //    * Compute center frequency in MHz. [Center freq./10^6]
+    //    * Step size = [(3584*10^3)/10^6] = 3.854
+    //    * Substract and add step size to center frequency for
+    //    * finding max and min distance from center frequency.
+    //    */
+    //    float center_mhz = _center_freq_arr[i] / pow(10, 6);
+    //    float step_size = (n_read * pow(10, 3))  / pow(10, 6);
+    //    gnuplot_exec("set xtics ('%.1f' 1, '%.1f' %d, '%.1f' %d)\n", 
+    //        center_mhz-step_size, 
+    //        center_mhz, n_read/2,
+    //        center_mhz+step_size, n_read);
+    //    gnuplot_exec("set yrange [0:%d]\n", y_range);
+    //    gnuplot_exec("set grid\n");
+    //}
 	return 0;
 }
 /*!
@@ -233,26 +239,13 @@ static int configure_gnuplot(){
  * \return 0 on success
  * \return 1 on buffer reset error
  */
-static int configure_rtlsdr(){
-	int device_count = rtlsdr_get_device_count();
-	if (!device_count) {
-		log_error("No supported devices found.\n");
-		exit(1);
-	}
-	log_info("Starting rtl_map ~\n");
-	log_info("Found %d device(s):\n", device_count);
-	for(int i = 0; i < device_count; i++){
-		if(_log_colors)
-			log_info("#%d: %s%s%s\n", n, bold_attr, rtlsdr_get_device_name(i), all_attr_off);
-		else
-			log_info("#%d: %s\n", n, rtlsdr_get_device_name(i));
-	}
-	int dev_open = rtlsdr_open(&dev, _dev_id);
+static int configure_rtlsdr(int _dev_id, int _center_freq){
+	int dev_open = rtlsdr_open(&dev_arr[_dev_id], _dev_id);
 	if (dev_open < 0) {
 		log_fatal("Failed to open RTL-SDR device #%d\n", _dev_id);
 		exit(1);
 	}else{
-		log_info("Using device: #%d\n", dev_open);
+		log_info("Using device: #%d\n", _dev_id);
 	}
 	/**!
 	 * Set gain mode auto if '_gain' equals to 0.
@@ -261,13 +254,13 @@ static int configure_rtlsdr(){
 	 * gain setter function must be called.)
  	 */
 	if(!_gain){
-		rtlsdr_set_tuner_gain_mode(dev, _gain);
+		rtlsdr_set_tuner_gain_mode(dev_arr[_dev_id], _gain);
 		log_info("Gain mode set to auto.\n");
 	}else{
-		rtlsdr_set_tuner_gain_mode(dev, 1);
-		int gain_count = rtlsdr_get_tuner_gains(dev, NULL);
+		rtlsdr_set_tuner_gain_mode(dev_arr[_dev_id], 1);
+		int gain_count = rtlsdr_get_tuner_gains(dev_arr[_dev_id], NULL);
 		log_info("Supported gain values (%d): ", gain_count);
-		int gains[gain_count], supported_gains = rtlsdr_get_tuner_gains(dev, gains);
+		int gains[gain_count], supported_gains = rtlsdr_get_tuner_gains(dev_arr[_dev_id], gains);
 		for (int i = 0; i < supported_gains; i++){
 			/**!
 			 * Different RTL-SDR devices have different supported gain
@@ -279,18 +272,18 @@ static int configure_rtlsdr(){
 		}
 		fprintf(stderr, "\n");
 		log_info("Gain set to %.1f\n", _gain / 10.0);
-		rtlsdr_set_tuner_gain(dev, _gain);
+		rtlsdr_set_tuner_gain(dev_arr[_dev_id], _gain);
 	}
 	/**! 
 	 * Enable or disable offset tuning for zero-IF tuners, which allows to avoid
  	 * problems caused by the DC offset of the ADCs and 1/f noise.
  	 */
-	rtlsdr_set_offset_tuning(dev, _offset_tuning);
-	rtlsdr_set_center_freq(dev, _center_freq);
-	rtlsdr_set_sample_rate(dev, _samp_rate);
+	rtlsdr_set_offset_tuning(dev_arr[_dev_id], _offset_tuning);
+	rtlsdr_set_center_freq(dev_arr[_dev_id], _center_freq);
+	rtlsdr_set_sample_rate(dev_arr[_dev_id], _samp_rate);
 	log_info("Center frequency set to %d Hz.\n", _center_freq);
 	log_info("Sampling at %d S/s\n", _samp_rate);
-	int r = rtlsdr_reset_buffer(dev);
+	int r = rtlsdr_reset_buffer(dev_arr[_dev_id]);
 	if (r < 0){
 		log_fatal("Failed to reset buffers.\n");
 		return 1;
@@ -352,8 +345,30 @@ static int cmp_sample(const void * a, const void * b){
  * \param sample_c sample count, also used for FFT size
  * \param buf array that contains I/Q samples
  */
-static void create_fft(int sample_c, uint8_t *buf){
-        float amp, db; /*!< Amplitude & dB */
+static void create_fft(int sample_c, uint8_t *buf, int _dev_id){
+    if (_use_gnuplot) {
+        gnuplot_exec("set terminal qt %d\n", _dev_id);
+        gnuplot_exec("set title 'Channel %d Spectrum (MHz)' enhanced\n", _dev_id + 1);
+        //gnuplot_exec("set xlabel 'Frequency (MHz)'\n");
+        gnuplot_exec("set ylabel 'Gain (dB)'\n");
+        /**!
+        * Compute center frequency in MHz. [Center freq./10^6]
+        * Step size = [(3584*10^3)/10^6] = 3.854
+        * Substract and add step size to center frequency for
+        * finding max and min distance from center frequency.
+        */
+        float center_mhz = _center_freq_arr[_dev_id] / pow(10, 6);
+        float step_size = (n_read * pow(10, 3))  / pow(10, 6);
+        gnuplot_exec("set xtics ('%.1f' 1, '%.1f' %d, '%.1f' %d, '%.1f' %d, '%.1f' %d)\n", 
+            center_mhz-step_size,  	       // min
+	    center_mhz-step_size/2, n_read/4,  // min-middle
+            center_mhz, n_read/2, 	       // middle
+	    center_mhz+step_size/2, 3*n_read/4,// middle-max
+            center_mhz+step_size, n_read);     // max
+        gnuplot_exec("set yrange [0:%d]\n", y_range);
+        gnuplot_exec("set grid\n");
+    }
+    float amp, db; /*!< Amplitude & dB */
 	/**! 
 	 * Configure FFTW to convert the samples in time domain to frequency domain. 
 	 * Allocate memory for 'in' and 'out' arrays.
@@ -409,19 +424,18 @@ static void create_fft(int sample_c, uint8_t *buf){
 		log_info("Creating FFT graph from samples using gnuplot...\n");
 	else if (!_cont_read && !_use_gnuplot)
 		log_info("Reading samples...\n");
-	if(_use_gnuplot)
-		gnuplot_exec("plot '-' smooth frequency with linespoints lt -1 notitle\n");
-	//printf("NEW SAMPLE\n");
+	if(_use_gnuplot) {
+        // Replot without resetting anything
+        gnuplot_exec("plot '-' smooth frequency with linespoints lt -1 notitle\n");
+    }
 	for (int i=0; i < n_read; i++){
 		out_r = creal(out[i]) * creal(out[i]);
 		out_i = cimag(out[i]) * cimag(out[i]);
 		amp = sqrt(out_r + out_i);
-		//printf("out_r = %d, out_i = %d, amp = %f\n", out_r, out_i, amp);
 		if (!_mag_graph)
 			db = 20 * log10(amp);
 		else
 			db = amp;
-		//printf("y = %f, x = %d\n", db, i+1);
 		if(_write_file)
 			fprintf(file, "%d	%f\n", i+1, db);
 		if(_use_gnuplot)
@@ -436,6 +450,10 @@ static void create_fft(int sample_c, uint8_t *buf){
 		 * If you want to sort values see qsort function.
 		 * Example code: qsort(sample_bin, n_read, sizeof(Bin), cmp_sample);
 		 */
+		// fill previous spectrum
+		sample_bin_d1[i].id = sample_bin[i].id;
+		sample_bin_d1[i].val = sample_bin[i].val;
+		// fill current spectrum
 		sample_bin[i].id = i;
 		sample_bin[i].val = db;
 	}
@@ -446,6 +464,17 @@ static void create_fft(int sample_c, uint8_t *buf){
 		 */
 		gnuplot_exec("e\n");
 		fflush(gnuplotPipe);
+
+		// TODO: SEND SPECTRUM & D1 SPECTRUM TO MODEL!!
+  		//  GET CLASSIFICATION RESULTS, SEND TO CURRENT WINDOW!
+		if (/* there was a change in class result */) {
+        		gnuplot_exec("unset label \n");
+		}
+		if (/* channel is transmititing */) {
+			gnuplot_exec("set label 'Channel is transmitting!' at graph 0,3 tc \"red\"\n");
+		} else {
+			gnuplot_exec("set label 'Channel is not transmitting' at graph 0,3 tc \"red\"\n");
+		}
 	}
 	/**!
 	 * Deallocate FFT plan.
@@ -467,44 +496,16 @@ static void create_fft(int sample_c, uint8_t *buf){
  * \param len length of buffer
  * \param ctx context which is given at rtlsdr_read_async(...)
  */
-static void async_read_callback(uint8_t *n_buf, uint32_t len, void *ctx){
-	int i;
-	create_fft(n_read, n_buf);
-	//for (i = 0; i < 512; i = i + 1) {
-	//	printf("x = %d, y = %d ", i, n_buf[i]);
-	//}
-	//printf("\n");
+static void async_read_callback(uint8_t *n_buf, uint32_t len, void *ctx) {
+	create_fft(n_read, n_buf, current_dev);
 	if (_cont_read && read_count < _num_read){
-		usleep(1000*_refresh_rate);
-		rtlsdr_read_async(dev, async_read_callback, NULL, 0, buf_size);
+        current_dev = !current_dev; // ping-pong between devices to read from
+	usleep(1000*_refresh_rate);
+        rtlsdr_read_async(dev_arr[current_dev], async_read_callback, NULL, 0, buf_size);
 	}else{
 		log_info("Done, exiting...\n");
 		do_exit();
 	}
-	/**!
-	 * TODO #3: Frequency scanner
-	 * Add -S argument for scan mode.
-	 * Add -b argument for frequency range. (eg.: 90 MHz - 100 MHz)
-	 * For frequency scanning we have to recalculate center frequency,
-	 * min and max points of graph. 
-	 * Then, rtlsdr_set_center_freq and rtlsdr_reset_buffer functions should be
-	 * called.
-	 * Optionally, sorting samples/detecting the peaks might be useful 
-	 * with this scanner application. (For sorting, see given qsort example.)
-	 * Example code:
-	 * =========================
-	 *	rtlsdr_cancel_async(dev);
-	 *	_center_freq += pow(10, 5);
-	 *	float center_mhz = _center_freq / pow(10, 6);
-	 *	float step_size = (n_read * pow(10, 3))  / pow(10, 6);
-	 *	gnuplot_exec("set xtics ('%.1f' 1, '%.1f' 256, '%.1f' 512)\n", 
-	 *	center_mhz-step_size, 
-	 *	center_mhz, 
-	 *	center_mhz+step_size);
-   	 *	rtlsdr_set_center_freq(dev, _center_freq);
-	 *	rtlsdr_reset_buffer(dev);
-	 * =========================
-	 */
 }
 
 /*!
@@ -513,26 +514,24 @@ static void async_read_callback(uint8_t *n_buf, uint32_t len, void *ctx){
  * 3. after create_fft, sleep for the provided refresh rate
  * 4. repeat
  */
-void read_plot_data() {
+static void read_plot_data() {
 	uint8_t file_buf [n_read];
 	size_t samples = fread(file_buf, sizeof(uint8_t), n_read, rfile);
 	while (samples == n_read) {
-		create_fft(n_read, file_buf);
+		create_fft(n_read, file_buf, 1);
 		usleep(1000*_refresh_rate);
 		samples = fread(file_buf, sizeof(uint8_t), n_read, rfile);
 	}
 	log_info("Done, exiting...\n");
-	do_exit();	
+	do_exit();
 }
 
 /*!
  * Print usage and exit.
  */
-static void print_usage(){
+static void print_usage() {
 	char *usage	= "rtl_map, a FFT-based visualizer for RTL-SDR devices. (RTL2832/DVB-T)\n\n"
-				  "Usage:\t[-d device index (default: 0)]\n"
                   "\t[-s sample rate (default: 2048000 Hz)]\n"
-				  "\t[-f center frequency (Hz)] *\n"
 				  "\t[-g gain (0 for auto) (default: ~1-3)]\n"
 				  "\t[-n number of reads (default: int_max.)]\n"
 				  "\t[-r refresh rate for -C read (default: 500ms)]\n"
@@ -554,19 +553,13 @@ static void print_usage(){
  * \param argv argument vector
  * \return 0 on success
  */
-static int parse_args(int argc, char **argv){
+static int parse_args(int argc, char **argv) {
 	int opt;
-	while ((opt = getopt(argc, argv, "d:s:f:g:r:n:DCMOThi:")) != -1) {
+	while ((opt = getopt(argc, argv, "s:g:r:n:DCMOThi:")) != -1) {
         switch (opt) {
-            case 'd':
-                _dev_id = atoi(optarg);
-                break;
 			case 's':
                 _samp_rate = atoi(optarg);
             	break;
-            case 'f':
-                _center_freq = atoi(optarg);
-                break;
             case 'g':
 				/**! Tenths of a dB */
                 _gain = (int)(atof(optarg) * 10); 
@@ -609,9 +602,6 @@ static int parse_args(int argc, char **argv){
                 break;
         }
     }
-	/**! Center frequency (-f) is mandatory */
-	if (!_center_freq)
-		print_usage();
 	_filename = argv[optind];
 	return 0;
 }
@@ -624,12 +614,30 @@ static int parse_args(int argc, char **argv){
  */
 void main(int argc, char **argv){
 	parse_args(argc, argv);
+    current_dev = 0;
+    
+    int device_count = rtlsdr_get_device_count();
+	if (!device_count) {
+		log_error("No supported devices found.\n");
+		exit(1);
+	}
+	log_info("Starting rtl_map ~\n");
+	log_info("Found %d device(s):\n", device_count);
+	for(int i = 0; i < device_count; i++) {
+		if(_log_colors)
+			log_info("#%d: %s%s%s\n", i, bold_attr, rtlsdr_get_device_name(i), all_attr_off);
+		else
+			log_info("#%d: %s\n", i, rtlsdr_get_device_name(i));
+	}
+    
 	if (_in_file == NULL) {
 		register_signals();
 		configure_gnuplot();
-		configure_rtlsdr();
+		configure_rtlsdr(_dev_id_arr[0], _center_freq_arr[0]);
+        	configure_rtlsdr(_dev_id_arr[1], _center_freq_arr[1]);
 		open_file();
-		rtlsdr_read_async(dev, async_read_callback, NULL, 0, buf_size);
+		int val = rtlsdr_read_async(dev_arr[current_dev], async_read_callback, NULL, 0, buf_size);
+        log_info("Return val: %d\n", val);
 	} else {
 		register_signals();
 		configure_gnuplot();
