@@ -5,6 +5,9 @@
 #define BW_THRESH 23.0f
 #define BW_MARGIN 20
 
+float curr_avg[2048] = {0};
+float prev_avg[2048] = {0};
+
 void extract_features(
     data_point_t* o_features,
     float* i_curr_fft_buf, 
@@ -20,9 +23,6 @@ void extract_features(
     float gain_avg = 0.0f;
     float gain_var = 0.0f;
     float var_dif = 0.0;
-
-    float* curr_avg = (float*)calloc(conv_samples, sizeof(float));
-    float* prev_avg = (float*)calloc(conv_samples, sizeof(float));
 
     // Averaging and Diff
     for(uint8_t t = 0; t < AVG_ORDER; t++)
