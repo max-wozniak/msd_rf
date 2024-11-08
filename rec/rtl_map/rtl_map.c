@@ -23,14 +23,17 @@
 #include <complex.h>
 #include <unistd.h>
 #include <stdarg.h>
+#include <stdio.h>
 #include <time.h>
 #include <limits.h>
 /*! External libraries */
 #include <fftw3.h>
 #include <rtl-sdr.h>
 #include <pthread.h>
+#include "preprocessor.h"
+#include "classifier.h"
+// ^ also includes classifier.h
 
-// 1536 for 3x band
 #define NUM_READ 512
 #define log_info(...) print_log(INFO, __VA_ARGS__)
 #define log_error(...) print_log(ERROR, __VA_ARGS__)
@@ -43,10 +46,12 @@ static fftw_plan fftwp; /**!
  			 * to compute the FFT 
  			 */ 
 static fftw_complex *in, *out; /*!< Input and output arrays of the transform */
-static FILE *gnuplotPipe, *file, *rfile; /**!
+static FILE *gnuplotPipe, *file, *rfile, *mdl; /**!
 				  * Pipe for communicating with gnuplot
 				  * File to write
-          * File to read
+                  * File to read
+                  * file to read samples
+                  * file to read model
 				  */
 static struct sigaction sig_act; /*!< For changing the signal actions */
 static const int n_read = NUM_READ; /*!< Sample count & data points & FFT size */
@@ -70,9 +75,14 @@ static int n, /*!< Used at raw I/Q data to complex conversion */
 	_write_file = 0, /*!< [ARG] Write output of the FFT to a file|stdout (optional) */
   _read_file = 0; /*!< [ARG] Read file input time-domain samples instead of device handle (optional) */
 static const int y_range = 100; // y-axis range for GNUplot
-static const int _center_freq_arr[2] = {452300000, 457300000};
+static const int _center_freq_arr[2] = {457300000, 452300000};
+static const int bandwidth = 12500; // 12.5 kHz
 static const int _dev_id_arr[2] = {0, 1};
 static int current_dev;
+static classifier_t* cls; // struct for classifier
+static data_point_t features; // struct for pre-processed features
+static uint8_t output[2]; // class model output
+static uint8_t output_d1[2]; // class model output d1
 static char t_buf[16], /*!< Time buffer, used for getting current time */
 	*_filename, /*!< [ARG] File name to write samples (optional) */
 	*log_levels[] = { 
@@ -88,18 +98,8 @@ static va_list vargs;  /*!< Holds information about variable arguments */
 static time_t raw_time; /*!< Represents time value */
 static char* _in_file = NULL; /*!< Input sample file */
 
-/**!
- * 'Bin' is created from 'SampleBin' struct with
- * the purpose of storing sample IDs and values to
- * make data processing operations more easier and faster.
- * Such as classification and sorting.
- */
-typedef struct SampleBin { 
-	float val;
-    int id;
-} Bin;
-static Bin sample_bin[NUM_READ]; /*!< 'Bin' array that will contain IDs and values */
-static Bin sample_bin_d1[NUM_READ];
+static float sample_bin[2][NUM_READ];
+static float sample_bin_d1[2][NUM_READ];
 
 //void async_read_callback(uint8_t *n_buf, uint32_t len, void *ctx);
 //void print_usage();
@@ -147,6 +147,7 @@ static void do_exit() {
 		pclose(gnuplotPipe);
 	if(_filename != NULL && strcmp(_filename, "-"))
 		fclose(file);
+    destroy_classifier(cls); // free model
 	exit(0);
 }
 /*!
@@ -229,6 +230,21 @@ static int configure_gnuplot(){
     //    gnuplot_exec("set yrange [0:%d]\n", y_range);
     //    gnuplot_exec("set grid\n");
     //}
+    
+    // initialize classification model
+    mdl = fopen("../../../classifier/model.mdl", "r");
+    cls = init_classifier(mdl);
+    if(cls == NULL) {
+        log_error("Failed to open classification model.");
+        exit(1);
+    }
+    //features = (data_point_t*) malloc(sizeof(data_point_t));
+    //if (features == NULL) {
+    //    log_error("Failed to allocate memory for feature buffer...");
+    //    exit(1);        
+    //}
+    output_d1[0] = 2;
+    output_d1[1] = 2;
 	return 0;
 }
 /*!
@@ -281,6 +297,7 @@ static int configure_rtlsdr(int _dev_id, int _center_freq){
 	rtlsdr_set_offset_tuning(dev_arr[_dev_id], _offset_tuning);
 	rtlsdr_set_center_freq(dev_arr[_dev_id], _center_freq);
 	rtlsdr_set_sample_rate(dev_arr[_dev_id], _samp_rate);
+    rtlsdr_set_tuner_bandwidth(dev_arr[_dev_id], bandwidth);
 	log_info("Center frequency set to %d Hz.\n", _center_freq);
 	log_info("Sampling at %d S/s\n", _samp_rate);
 	int r = rtlsdr_reset_buffer(dev_arr[_dev_id]);
@@ -441,9 +458,7 @@ static void create_fft(int sample_c, uint8_t *buf, int _dev_id){
 		if(_use_gnuplot)
 			gnuplot_exec("%d	%f\n", db, i+1);
 		/**! 
-		 * Fill sample_bin with ID and values.
-		 *
-		 * NOTE: sample_bin is not used anywhere. 
+		 * Fill sample_bin with values.
 		 *
 		 * TODO #2: Find the maximum value of samples, show it on graph 
 		 * with a different color.  Might be useful for frequency scanner.
@@ -451,11 +466,9 @@ static void create_fft(int sample_c, uint8_t *buf, int _dev_id){
 		 * Example code: qsort(sample_bin, n_read, sizeof(Bin), cmp_sample);
 		 */
 		// fill previous spectrum
-		sample_bin_d1[i].id = sample_bin[i].id;
-		sample_bin_d1[i].val = sample_bin[i].val;
+		sample_bin_d1[_dev_id][i] = sample_bin[_dev_id][i];
 		// fill current spectrum
-		sample_bin[i].id = i;
-		sample_bin[i].val = db;
+		sample_bin[_dev_id][i] = (isfinite(db)) ? db : 0;
 	}
 	if(_use_gnuplot){
 		/**!
@@ -464,17 +477,32 @@ static void create_fft(int sample_c, uint8_t *buf, int _dev_id){
 		 */
 		gnuplot_exec("e\n");
 		fflush(gnuplotPipe);
-
-		// TODO: SEND SPECTRUM & D1 SPECTRUM TO MODEL!!
+        
+	// preprocess the data
+        extract_features(&features, sample_bin[_dev_id], sample_bin_d1[_dev_id], n_read);
+        //for (int i = 0; i < n_read; i = i + 1) {
+        //    printf("sample: %f, sample_d1: %f\n", sample_bin[_dev_id][i], sample_bin_d1[_dev_id][i]);
+        //}
+        for (int i = 0; i < NUM_FEATURES; i = i + 1) {
+            printf("%.5f ", features.val[i]);
+        }
+        //printf("\n");
+        // send the features into the model
+        output[_dev_id] = classify(cls, &features);
+        printf("output: %d output_d1: %d\n", output[_dev_id], output_d1[_dev_id]);
+        
   		//  GET CLASSIFICATION RESULTS, SEND TO CURRENT WINDOW!
-		if (/* there was a change in class result */) {
-        		gnuplot_exec("unset label \n");
-		}
-		if (/* channel is transmititing */) {
-			gnuplot_exec("set label 'Channel is transmitting!' at graph 0,3 tc \"red\"\n");
-		} else {
-			gnuplot_exec("set label 'Channel is not transmitting' at graph 0,3 tc \"red\"\n");
-		}
+        // only update window if there was a change in class. result
+	if (output[_dev_id] != output_d1[_dev_id]) {
+            gnuplot_exec("unset label \n");
+            if (output[_dev_id]) {
+                gnuplot_exec("set label 'Channel is transmitting!' at graph 0.5,0.95 tc \"red\" font \"sans,15\"\n");
+            } else {
+                gnuplot_exec("set label 'Channel is not transmitting!' at graph 0.5,0.95 tc \"red\" font \"sans,15\"\n");
+            }
+	}
+        // propagate old class result
+        output_d1[_dev_id] = output[_dev_id];
 	}
 	/**!
 	 * Deallocate FFT plan.
@@ -499,8 +527,8 @@ static void create_fft(int sample_c, uint8_t *buf, int _dev_id){
 static void async_read_callback(uint8_t *n_buf, uint32_t len, void *ctx) {
 	create_fft(n_read, n_buf, current_dev);
 	if (_cont_read && read_count < _num_read){
-        current_dev = !current_dev; // ping-pong between devices to read from
-	usleep(1000*_refresh_rate);
+        //current_dev = !current_dev; // ping-pong between devices to read from
+        usleep(1000*_refresh_rate);
         rtlsdr_read_async(dev_arr[current_dev], async_read_callback, NULL, 0, buf_size);
 	}else{
 		log_info("Done, exiting...\n");
@@ -634,7 +662,7 @@ void main(int argc, char **argv){
 		register_signals();
 		configure_gnuplot();
 		configure_rtlsdr(_dev_id_arr[0], _center_freq_arr[0]);
-        	configure_rtlsdr(_dev_id_arr[1], _center_freq_arr[1]);
+        //configure_rtlsdr(_dev_id_arr[1], _center_freq_arr[1]);
 		open_file();
 		int val = rtlsdr_read_async(dev_arr[current_dev], async_read_callback, NULL, 0, buf_size);
         log_info("Return val: %d\n", val);

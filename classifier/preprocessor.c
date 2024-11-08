@@ -23,6 +23,10 @@ void extract_features(
     float gain_avg = 0.0f;
     float gain_var = 0.0f;
     float var_dif = 0.0;
+    for (int i = 0; i < 2048; i++) {
+    	curr_avg[i] = 0;
+	prev_avg[i] = 0;
+    }
 
     // Averaging and Diff
     for(uint8_t t = 0; t < AVG_ORDER; t++)
@@ -50,7 +54,7 @@ void extract_features(
     }
 
     // Find fmax
-    for (uint32_t i = conv_samples-1; i >= 0; i--)
+    for (uint32_t i = conv_samples-1; i >= 1; i--)
     {
         if (curr_avg[i] < BW_THRESH && curr_avg[i-1] > BW_THRESH)
         {

@@ -1,7 +1,9 @@
-#include <stdint.h>
-#include <stdio.h>
+#ifndef CLASSIFIER_H
+#define CLASSIFIER_H
 
 #define NUM_FEATURES 4
+#include <stdint.h>
+#include <stdio.h>
 
 typedef struct {
     float val[NUM_FEATURES];
@@ -17,5 +19,4 @@ uint8_t classify(classifier_t* cls, data_point_t* input);
 classifier_t* init_classifier(FILE* fptr);
 void destroy_classifier(classifier_t* cls);
 
-
-
+#endif
