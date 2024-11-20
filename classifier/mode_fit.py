@@ -6,10 +6,13 @@ Created on Sat Nov  2 15:04:56 2024
 """
 
 SAMPLES_PER_SPECTRUM = 512
-AVERAGE_ORDER = 12
-NUM_FEATURES = 4
+PREPROC_WINDOW_SIZE = 50
+PREPROC_RANGE_MIN = int(SAMPLES_PER_SPECTRUM/2 - PREPROC_WINDOW_SIZE/2)
+PREPROC_RANGE_MAX = PREPROC_RANGE_MIN + PREPROC_WINDOW_SIZE
+AVERAGE_ORDER = 3
+NUM_FEATURES = 2
 KERNEL_ORDER = 1
-TEST_INDEX = 34
+TEST_INDEX = 50
 
 BW_THRESH = 23.0
 
@@ -69,15 +72,14 @@ for infile in infiles:
                     fmax = j
                     break
         '''
-        # train_data_tmp[i, 0] = fmax-fmin
-        train_data_tmp[i, 0] = np.var(avg_gain[i, :])
-        train_data_tmp[i, 1] = np.mean(avg_gain[i, :])
-        train_data_tmp[i, 2] = np.var(dG[i, :])
-        train_data_tmp[i, 3] = np.mean(dG[i, :])
-     
         
+        
+        train_data_tmp[i, 0] = np.max(avg_gain[i, PREPROC_RANGE_MIN:PREPROC_RANGE_MAX])
+        train_data_tmp[i, 1] = np.max(dG[i, PREPROC_RANGE_MIN:PREPROC_RANGE_MAX])
+        
+     
     # Assign labels
-    label = 1 if 'fm.out' in infile else 0
+    label = 1 if '_ant.out' in infile else 0
     labels = np.ones((train_data_tmp.shape[0], 1), dtype=int)*label
     
     # Split the data into training and validation subsets
@@ -97,15 +99,6 @@ for infile in infiles:
         train_labels = np.concatenate((train_labels, ytrain))
         test_labels = np.concatenate((test_labels, ytest))
     
-            
-
-print('Fmin: ', fmin)
-print('Fmax: ', fmax)
-print('Width: ', fmax-fmin)
-print('Signal Var: ', np.var(avg_gain[TEST_INDEX, fmin+20:fmax+1-20]))
-print('Signal Avg: ', np.mean(avg_gain[TEST_INDEX, fmin+20:fmax+1-20]))
-print('Diff Avg: ', np.mean(dG[TEST_INDEX, fmin+20:fmax+1-20]))
-print('Diff Var: ', np.var(dG[TEST_INDEX, fmin+20:fmax+1-20]))
 
 
 train_labels = np.ravel(train_labels)
@@ -121,17 +114,18 @@ plt.legend(['Smoothed Signal', 'FFT(i) - FFT(i-1)'], loc='upper left')
 print(train_data.shape)
 print(test_data.shape)
 fig = plt.figure()
-ax = fig.add_subplot(projection='3d')
+ax = fig.add_subplot()
 pos_mask = train_labels == 1
 neg_mask = train_labels != 1
 positive = train_data[pos_mask, :]
 negative = train_data[neg_mask, :]
-ax.scatter(positive[:, 1], positive[:, 2], positive[:, 3], marker='o')
-ax.scatter(negative[:, 1], negative[:, 2], negative[:, 3], marker='^')
-ax.set_xlabel('Gain Variance')
-ax.set_ylabel('Gain Mean')
-ax.set_zlabel('Diff Variance')
-plt.show()
+ax.scatter(positive[:, 0], positive[:, 1], marker='o')
+ax.scatter(negative[:, 0], negative[:, 1], marker='^')
+ax.set_xlabel('Gain')
+ax.set_ylabel('|dG/dt|')
+
+ax.legend(['Signal of Interest', 'Separate Signal'], loc='upper left')
+
 
 # Fit the model
 model = svm.LinearSVC(dual=False, max_iter=10000)
@@ -145,4 +139,6 @@ model_params = np.concatenate(
     dtype=object).reshape(1, -1)
 fmt_str = "%d %d" + (KERNEL_ORDER*NUM_FEATURES+1)*" %f"
 np.savetxt(model_file, model_params, fmt=fmt_str)
+
+plt.show()
 

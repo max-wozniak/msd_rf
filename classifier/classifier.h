@@ -1,7 +1,7 @@
 #ifndef CLASSIFIER_H
 #define CLASSIFIER_H
 
-#define NUM_FEATURES 4
+#define NUM_FEATURES 2
 #include <stdint.h>
 #include <stdio.h>
 

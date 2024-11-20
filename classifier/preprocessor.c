@@ -1,9 +1,15 @@
 #include <stdlib.h>
 #include "preprocessor.h"
 
-#define AVG_ORDER 12
+#define AVG_ORDER 3
 #define BW_THRESH 23.0f
 #define BW_MARGIN 20
+
+#define PROC_WINDOW_W 25
+#define PROC_WINDOW_C 255
+#define PROC_WINDOW_L (PROC_WINDOW_C - PROC_WINDOW_W)
+#define PROC_WINDOW_R (PROC_WINDOW_C + PROC_WINDOW_W)
+
 
 float curr_avg[2048] = {0};
 float prev_avg[2048] = {0};
@@ -15,8 +21,7 @@ void extract_features(
     uint32_t i_num_samples)
 {
     uint32_t conv_samples = i_num_samples - AVG_ORDER + 1;
-    uint32_t fmin = 0;
-    uint32_t fmax = i_num_samples-1;
+    float gain_max = 0.0f;
     uint8_t min_found = 0;
     float diff_max = 0.0f;
     float diff_curr;
@@ -34,8 +39,6 @@ void extract_features(
         curr_avg[0] += i_curr_fft_buf[t] / (float)AVG_ORDER;
         prev_avg[0] += i_prev_fft_buf[t] / (float)AVG_ORDER;
     }
-    diff_max = curr_avg[0] - prev_avg[0];
-    if (curr_avg[0] > BW_THRESH) min_found = 1;
 
     for(uint32_t i = 1; i < conv_samples; i++)
     {
@@ -44,41 +47,26 @@ void extract_features(
             curr_avg[i] += i_curr_fft_buf[i + t] / (float)AVG_ORDER;
             prev_avg[i] += i_prev_fft_buf[i + t] / (float)AVG_ORDER;
         }
-        diff_curr = curr_avg[i] - prev_avg[i];
-        if (diff_curr > diff_max) diff_max = diff_curr;
-        if (!min_found && curr_avg[i-1] < BW_THRESH && curr_avg[i] > BW_THRESH)
-        {
-            fmin = i;
-            min_found = 1;
-        }
     }
 
-    // Find fmax
-    for (uint32_t i = conv_samples-1; i >= 1; i--)
+    // Find max gain
+
+    for (uint32_t i = PROC_WINDOW_L; i < PROC_WINDOW_R; i++)
     {
-        if (curr_avg[i] < BW_THRESH && curr_avg[i-1] > BW_THRESH)
+        if (curr_avg[i] > gain_max)
         {
-            fmax = i;
-            break;
+            gain_max = curr_avg[i];
+        }
+
+        diff_curr = fabs((float)(curr_avg[i] - prev_avg[i]));
+        if (diff_curr > diff_max)
+        {
+            diff_max = diff_curr;
         }
     }
-
-    // Calc Avg, Variance
-    for (uint32_t i = fmin+BW_MARGIN; i < fmax-BW_MARGIN; i++)
-    {
-        gain_avg += curr_avg[i];
-    }
-    gain_avg /= (float)(fmax-fmin-2*BW_MARGIN);
-    for (uint32_t i = fmin+BW_MARGIN; i < fmax-BW_MARGIN; i++)
-    {
-        var_dif = curr_avg[i] - gain_avg;
-        gain_var += var_dif*var_dif;
-    }
-    gain_var /= (float)(fmax-fmin-2*BW_MARGIN - 1);
 
     // Set features
-    o_features->val[0] = fmax - fmin;
-    o_features->val[1] = gain_avg;
-    o_features->val[2] = gain_var;
-    o_features->val[3] = diff_max;
+    o_features->val[0] = gain_max;
+    o_features->val[1] = diff_max;
+
 }

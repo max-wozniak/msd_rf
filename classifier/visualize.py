@@ -5,7 +5,7 @@ from os.path import isfile, join
 
 SAMP_NUM = 50
 
-infile = '.\\train\\channel1_fm_pl.out'
+infile = '.\\train\\channel1_ant.out'
 raw_gain = np.genfromtxt(infile, dtype=float)[:, 1]
 raw_gain = raw_gain[SAMP_NUM*512:(SAMP_NUM+1)*512]
 
