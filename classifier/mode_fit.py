@@ -134,9 +134,20 @@ print('Score: ', model.score(test_data, test_labels))
 
 # Save the decision boundary parameters to a file
 polarity = np.sign(model.intercept_)[0] if model.predict(np.zeros((1, NUM_FEATURES))) == 1 else -np.sign(model.intercept_)[0]
+coefs = model.coef_.flatten()
 model_params = np.concatenate(
     ([int(KERNEL_ORDER)], [int(polarity)], model.coef_.flatten(), model.intercept_), 
     dtype=object).reshape(1, -1)
+
+a = coefs[0]
+b = coefs[1]
+c = model.intercept_
+
+y0 = (-c - a*20)/b
+y1 = (-c - a*80)/b
+
+ax.plot([20, 80], [y0, y1])
+
 fmt_str = "%d %d" + (KERNEL_ORDER*NUM_FEATURES+1)*" %f"
 np.savetxt(model_file, model_params, fmt=fmt_str)
 

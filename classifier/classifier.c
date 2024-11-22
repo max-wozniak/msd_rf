@@ -70,7 +70,7 @@ uint8_t classify(classifier_t* cls, data_point_t* input)
         for(uint8_t order = 0; order < cls->order; order++)
         {
             poly *= input->val[xi];
-            output += cls->coeffs[xi*NUM_FEATURES + order]*poly;
+            output += cls->coeffs[xi*cls->order + order]*poly;
         }
     }
 
